@@ -1,3 +1,3 @@
 # analysis-project
 
-### Create a data folder that contains processed subfolder and raw subfolder
+Create a data folder that contains processed subfolder and raw subfolder
