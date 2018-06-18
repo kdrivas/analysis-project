@@ -1,6 +1,7 @@
 from datetime import date
 import numpy as np
 import pandas as pd
+import time, pprint    
 
 def convertDate(row, column, nan_value='NaT'):
     """
@@ -143,3 +144,53 @@ def add_dayscount(day_df, all_data):
 def add_datefeatures(day_df):
     day_df['']
     
+from sklearn.metrics import mean_squared_error
+pp = pprint.PrettyPrinter(indent=3)
+
+def fit_model(model, X_trn, y_trn, X_val, y_val, early_stopping, cat_indices):
+    if X_val is not None:
+        early_stopping = 30 if early_stopping else 0
+        model.fit(X_trn, y_trn, 
+                eval_set=[(X_val, y_val)],
+                early_stopping_rounds=early_stopping,
+                eval_metric='mse')
+    else:
+        model.fit(X_trn, y_trn)
+        
+def calculate_metrics(model, metrics, X_trn, y_trn, X_val, y_val):
+    metric_function = {'mse': mean_squared_error}
+    dset = {'trn': {'X': X_trn, 'y': y_trn},
+            'val': {'X': X_val, 'y': y_val}}
+    
+    for d in dset:
+        if dset[d]['X'] is not None:
+            y_pred = model.predict(dset[d]['X'])
+            for m in metrics:
+                metrics[m][d] += [metric_function[m](dset[d]['y'], y_pred)]
+        else:
+            for m in metrics:
+                metrics[m][d] += [0] # no val set
+                
+    pp.pprint(metrics)
+    print()
+    
+def run_model(model, X_train, y_train, X_val, y_val, X_test, 
+              metric_names, results=None, params_desc='',
+              early_stopping=False, cat_indices=None):
+    if results is None: results = pd.DataFrame()
+    metrics = {metric: {'trn': [], 'val': []} for metric in metric_names}
+    y_test = np.zeros((len(X_test)))
+    start = time.time()
+    
+    fit_model(model, X_train, y_train, X_val, y_val, early_stopping, cat_indices)
+    calculate_metrics(model, metrics, X_train, y_train, X_val, y_val)
+    y_test = model.predict(X_test)
+            
+    end = time.time()
+    means = {f'{d}_{m}_mean': np.mean(metrics[m][d]) for m in metrics \
+                                                     for d in metrics[m]}
+    metadata = {'params': params_desc, 'time': round(end - start, 2)}
+    pp.pprint(means)
+    results = results.append(pd.Series({**metadata, **means}),
+                             ignore_index=True)
+    return y_test, metrics, results, model
