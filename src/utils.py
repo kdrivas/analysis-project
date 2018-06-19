@@ -3,6 +3,9 @@ import numpy as np
 import pandas as pd
 import time, pprint    
 
+from sklearn.metrics import mean_squared_error
+pp = pprint.PrettyPrinter(indent=3)
+
 def convertDate(row, column, nan_value='NaT'):
     """
         Function to convert string date to integer and hour in seconds
@@ -141,11 +144,15 @@ def add_dayscount(day_df, all_data):
     day_df['DaysCountMainframeOp'] = days_count(day_df, all_data,
                                     ['Id_Job', 'Id_Malla'])
 
-def add_datefeatures(day_df):
-    day_df['']
+def get_day(row_date):
+    day = int(row_date % 100)
+    month = int(int(row_date / 100) % 100)
+    year = int(row_date / 10000)
+
+    return date(year, month, day).weekday()
     
-from sklearn.metrics import mean_squared_error
-pp = pprint.PrettyPrinter(indent=3)
+def add_datefeatures(day_df):
+    day_df['DiaSemana'] = day_df.apply(lambda row: get_day(row['Fecha_Ejec_Inicio_Int']), axis=1)
 
 def fit_model(model, X_trn, y_trn, X_val, y_val, early_stopping, cat_indices):
     if X_val is not None:
