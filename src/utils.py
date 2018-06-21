@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 import time, pprint    
@@ -6,7 +6,18 @@ import time, pprint
 from sklearn.metrics import mean_squared_error
 pp = pprint.PrettyPrinter(indent=3)
 
-def convertDate(row, column, nan_value='NaT'):
+def get_week_labels(n_weeks, year, month, day):
+    """
+        Function to get the week labels
+        n_weeks  : number of weeks, integer
+    """
+    week_labels = []
+    for n_week in range(n_weeks+1):
+        week_labels.append(int((date(year, month, day) - timedelta(days=7*(n_week))).strftime('%Y%m%d')))
+    
+    return week_labels[::-1]
+
+def convert_date(row, column, nan_value='NaT'):
     """
         Function to convert string date to integer and hour in seconds
         column  : name of columns, string
@@ -24,7 +35,7 @@ def convertDate(row, column, nan_value='NaT'):
         
     return pd.Series([date_int * 1.0, hour_int * 1.0])
 
-def convertInt(row, column, nan_value='-'):
+def convert_int(row, column, nan_value='-'):
     """
         Function to convert string time to seconds
         column  : name of columns, string
@@ -65,34 +76,36 @@ def make_set(train, test, fill_method='median', date_field='Fecha_Ejec_Inicio_In
     val = {}
     
     if fill_method == 'mean':
-        temp_group = train.groupby([date_field, 'Id_Job', 'Id_Malla']).mean().reset_index()
+        temp_group = train.loc[train.Mxrc == 0].groupby([date_field, 'Id_Job', 'Id_Malla']).mean().reset_index()
     elif fill_method == 'median':
-        temp_group = train.groupby([date_field, 'Id_Job', 'Id_Malla']).median().reset_index()
+        temp_group = train.loc[train.Mxrc == 0].groupby([date_field, 'Id_Job', 'Id_Malla']).median().reset_index()
     else:
         print('Error: fill_method should be mean or median')
         return null
-        
-    date = train[date_field].unique()[0]
+    
+    date = sorted(train[date_field].unique())[0]
     # This code fill [Id_Job, Id_Malla] in val. We set as 1 in Time field
     for ix, row in test.iterrows():
         val[(date, row['Id_Job'], row['Id_Malla'])] = 0
     
-    for ix, row in temp_group.sort_values(order_field, ascending=ascending).iterrows():
+    for ix, row in temp_group.sort_values([order_field, int_field], ascending=ascending).iterrows():
+        # val[(date, row['Id_Job'], row['Id_Malla'])] = [row[int_field], row['Mxrc'], row['Maxcmpc']]
         val[(date, row['Id_Job'], row['Id_Malla'])] = row[int_field]
         
     val = pd.DataFrame(pd.Series(val)).reset_index()
     val.columns = ['Fecha_Ejec_Inicio_Int', 'Id_Job', 'Id_Malla', int_field]
+    # val[int_field], val['Mxrc'], val['Maxcmpc'] = zip(*val['temp'])
+    # del val['temp']
     return val
 
-def apply_cats(df, trn):
+def apply_cats(df, cat_cols):
     """
-        Changes any columns of strings in df (DataFrame) into categorical variables
-        using trn (DataFrame) as a template for the category codes (inplace).
+        Changes any columns of strings in df (DataFrame) into categorical variables.
     """
-    for n,c in df.items():
-        if (n in trn.columns) and (trn[n].dtype.name=='category'):
-            df[n] = pd.Categorical(c, categories=trn[n].cat.categories, ordered=True)           
-    
+    for n, c in df.items():
+        if (n in cat_cols) and (df[n].dtype.name=='object'):
+            df[n] = pd.Categorical(c, categories=df[n].astype('category').cat.categories, ordered=True)           
+            
 def date_diff(d1, d2):
     """
         Days between d1 and d2, expressed as integers
@@ -111,17 +124,15 @@ def days_since(day_df, all_data, keys, nan_date=20170701):
             nan_date)), axis=1)
 
 # Count without considering weekdays
-def add_datediffs(day_df, all_data):
+def add_date_diffs(day_df, all_data):
     """
         Adds datediffs features to a dataset
     """
-    all_data = all_data[all_data.Mxrc != 0]
+    all_data = all_data[all_data.Mxrc == 0]
     date = sorted(day_df['Fecha_Ejec_Inicio_Int'].unique())[0]
-    all_data = all_data[all_data.Hora_Ejec_Inicio_Int < date]
     all_data = all_data.sort_values('Fecha_Ejec_Inicio_Int', ascending=False)
     
-    day_df['DaysSinceMainframeOp'] = days_since(day_df, all_data, 
-                                            ['Id_Job', 'Id_Malla'])
+    day_df['DaysSinceMainframeOp'] = days_since(day_df, all_data.loc[all_data['Fecha_Ejec_Inicio_Int'] < date].reset_index(), ['Id_Job', 'Id_Malla'])
 
 def days_count(day_df, all_data, keys):
     """
@@ -132,28 +143,71 @@ def days_count(day_df, all_data, keys):
             day_counter.get(tuple(r[k] for k in keys) if len(keys) > 1 else r[keys[0]], 
             0), axis=1)
     
-def add_dayscount(day_df, all_data):
+def add_days_count(day_df, all_data):
     """
         Adds dayscount features to a dataset (representing a single day/week)
         from the information of trades
     """
-    all_data = all_data[all_data.Mxrc != 0]
+    all_data = all_data[all_data.Mxrc == 0]
     date = sorted(day_df['Fecha_Ejec_Inicio_Int'].unique())[0]
-    all_data = all_data[all_data.Fecha_Ejec_Inicio_Int < date]
     
-    day_df['DaysCountMainframeOp'] = days_count(day_df, all_data,
-                                    ['Id_Job', 'Id_Malla'])
+    day_df['DaysCountMainframeOp'] = days_count(day_df, all_data.loc[all_data['Fecha_Ejec_Inicio_Int'] < date].reset_index(), ['Id_Job', 'Id_Malla'])
 
 def get_day(row_date):
-    day = int(row_date % 100)
-    month = int(int(row_date / 100) % 100)
-    year = int(row_date / 10000)
-
-    return date(year, month, day).weekday()
+    if np.isnan(row_date):
+        return np.nan
+    else:
+        day = int(row_date % 100)
+        month = int(int(row_date / 100) % 100)
+        year = int(row_date / 10000)
+        return date(year, month, day).weekday()
     
-def add_datefeatures(day_df):
+def add_date_features(day_df):
     day_df['DiaSemana'] = day_df.apply(lambda row: get_day(row['Fecha_Ejec_Inicio_Int']), axis=1)
 
+def add_mean_days(df, all_data, start_date):
+    
+    date_df = sorted(df['Fecha_Ejec_Inicio_Int'].unique())[0]
+    number_day = get_day(date_df)
+    
+    temp = all_data.loc[(all_data['Fecha_Ejec_Inicio_Int'] >= start_date) &\
+                        (all_data['Fecha_Ejec_Inicio_Int'] < date_df) &\
+                        (all_data['DiaSemana'] == number_day) & (all_data['Mxrc'] == 0)]\
+                        .groupby(['Id_Job', 'Id_Malla']).median().reset_index()
+    dict_temp = {}
+    for ix, row in temp.iterrows():
+        dict_temp[(row['Id_Job'], row['Id_Malla'])] = row['duracion_int']
+    
+    df['promedio_por_dia'] = 0
+    for ix, row in df.iterrows():
+        if (row['Id_Job'], row['Id_Malla']) in dict_temp:
+            df.at[ix, 'promedio_por_dia'] = dict_temp[(row['Id_Job'], row['Id_Malla'])]
+
+def add_mean_weeks(df, all_data, start_date):
+    date_df = sorted(df['Fecha_Ejec_Inicio_Int'].unique())[0]
+    temp = all_data.loc[(all_data['Fecha_Ejec_Inicio_Int'] >= start_date) &\
+                        (all_data['Fecha_Ejec_Inicio_Int'] < date_df) &\
+                        (all_data['Mxrc'] == 0)]\
+                        .groupby(['Id_Job', 'Id_Malla']).median().reset_index()       
+    dict_temp = {}
+    for ix, row in temp.iterrows():
+        dict_temp[(row['Id_Job'], row['Id_Malla'])] = row['duracion_int']
+    
+    df['promedio_por_semana'] = 0
+    for ix, row in df.iterrows():
+        if (row['Id_Job'], row['Id_Malla']) in dict_temp:
+            df.at[ix, 'promedio_por_semana'] = dict_temp[(row['Id_Job'], row['Id_Malla'])]
+
+def add_mean_features(df, all_data, n_week):
+    temp_date = sorted(df.Fecha_Ejec_Inicio_Int.unique())[0]
+    day = int(temp_date % 100)
+    month = int(int(temp_date / 100) % 100)
+    year = int(temp_date / 10000)
+    start_date = int((date(year, month, day) - timedelta(days=7*(n_week))).strftime('%Y%m%d'))
+    
+    add_mean_days(df, all_data, start_date)
+    add_mean_weeks(df, all_data, start_date)
+    
 def fit_model(model, X_trn, y_trn, X_val, y_val, early_stopping, cat_indices):
     if X_val is not None:
         early_stopping = 30 if early_stopping else 0
